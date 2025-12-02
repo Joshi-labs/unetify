@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Unetify Labs | The Agentic Web Infrastructure</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'neon-blue': '#00f3ff',
+                        'neon-purple': '#bc13fe',
+                        'dark-bg': '#0a0a0c',
+                        'panel-bg': '#131316',
+                    },
+                    fontFamily: {
+                        mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', "Liberation Mono", "Courier New", 'monospace'],
+                    },
+                    animation: {
+                        'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        /* Custom scrollbar for technical feel */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #0a0a0c; 
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #334155; 
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #475569; 
+        }
+        .grid-bg {
+            background-size: 40px 40px;
+            background-image: linear-gradient(to right, #202022 1px, transparent 1px),
+                              linear-gradient(to bottom, #202022 1px, transparent 1px);
+        }
+    </style>
+</head>
+<body class="bg-dark-bg text-slate-300 font-sans antialiased selection:bg-neon-blue selection:text-black">
+
+    <div class="fixed inset-0 grid-bg opacity-20 pointer-events-none z-0"></div>
+
+    <div class="relative z-10 max-w-6xl mx-auto px-6 flex flex-col min-h-screen">
+
+        <nav class="flex justify-between items-center py-8 border-b border-white/10">
+            <div class="flex items-center gap-3">
+                <div class="w-3 h-3 bg-neon-blue rounded-full shadow-[0_0_10px_#00f3ff]"></div>
+                <span class="text-xl font-bold tracking-widest text-white uppercase">Unetify<span class="text-slate-500 text-sm normal-case ml-2">Labs</span></span>
+            </div>
+            <div class="hidden md:flex gap-8 text-sm font-mono text-slate-400">
+                <a href="#" class="hover:text-neon-blue transition-colors">Documentation</a>
+                <a href="#" class="hover:text-neon-blue transition-colors">Protocol Spec (Draft)</a>
+                <span class="text-slate-600 cursor-not-allowed">Explorer (Coming Soon)</span>
+            </div>
+            <div class="font-mono text-xs text-neon-blue border border-neon-blue/30 px-3 py-1 rounded bg-neon-blue/10">
+                v0.1.0-alpha
+            </div>
+        </nav>
+
+        <main class="flex-grow flex flex-col justify-center py-20">
+            <div class="max-w-3xl">
+                <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/5 border border-white/10 text-xs font-mono text-neon-purple mb-6">
+                    <span class="w-2 h-2 rounded-full bg-neon-purple animate-pulse"></span>
+                    Initializing Global Agent Network
+                </div>
+                
+                <h1 class="text-5xl md:text-7xl font-bold text-white tracking-tight mb-6 leading-tight">
+                    The TCP/IP for <br/>
+                    <span class="text-transparent bg-clip-text bg-gradient-to-r from-neon-blue to-neon-purple">Autonomous Agents</span>
+                </h1>
+                
+                <p class="text-xl text-slate-400 mb-10 max-w-2xl leading-relaxed">
+                    Building the foundational communication, identity, and economic layer for the agentic web. 
+                    Enabling AI entities to talk, negotiate, and transact securely.
+                </p>
+
+                <div class="flex flex-col sm:flex-row gap-4">
+                    <button class="px-8 py-3 bg-white text-black font-bold rounded hover:bg-slate-200 transition-colors">
+                        Read Whitepaper
+                    </button>
+                    <button class="px-8 py-3 border border-white/20 text-white rounded hover:bg-white/5 transition-colors font-mono">
+                        $ git clone unetify-core
+                    </button>
+                </div>
+            </div>
+
+            <div class="mt-20 grid md:grid-cols-2 gap-12 items-start">
+                
+                <div class="space-y-8">
+                    <div class="border-l-2 border-neon-blue pl-6">
+                        <h3 class="text-white font-bold text-lg mb-2">Universal Identity (A-ID)</h3>
+                        <p class="text-slate-400 text-sm">Self-sovereign identity protocol for AI agents, replacing traditional IP addressing with cryptographic proofs.</p>
+                    </div>
+                    <div class="border-l-2 border-slate-700 hover:border-neon-purple pl-6 transition-colors duration-300">
+                        <h3 class="text-white font-bold text-lg mb-2">Secure Transport</h3>
+                        <p class="text-slate-400 text-sm">Verifiable message passing with built-in trust scores and result validation.</p>
+                    </div>
+                    <div class="border-l-2 border-slate-700 hover:border-green-500 pl-6 transition-colors duration-300">
+                        <h3 class="text-white font-bold text-lg mb-2">Agent Economy</h3>
+                        <p class="text-slate-400 text-sm">Micro-payment layer for autonomous service negotiation and resource purchasing.</p>
+                    </div>
+                </div>
+
+                <div class="bg-panel-bg border border-white/10 rounded-lg p-6 font-mono text-sm shadow-2xl relative overflow-hidden group">
+                    <div class="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-neon-blue to-neon-purple"></div>
+                    
+                    <div class="flex gap-2 mb-4">
+                        <div class="w-3 h-3 rounded-full bg-red-500/50"></div>
+                        <div class="w-3 h-3 rounded-full bg-yellow-500/50"></div>
+                        <div class="w-3 h-3 rounded-full bg-green-500/50"></div>
+                    </div>
+
+                    <div class="text-slate-300 space-y-2">
+                        <p class="opacity-50">// Initiating Unetify handshake...</p>
+                        <p><span class="text-neon-purple">const</span> packet = {</p>
+                        <p class="pl-4">source: <span class="text-green-400">"agent_8x92...b1"</span>,</p>
+                        <p class="pl-4">target: <span class="text-green-400">"service_weather_v2"</span>,</p>
+                        <p class="pl-4">protocol: <span class="text-neon-blue">"UNET/1.0"</span>,</p>
+                        <p class="pl-4">intent: <span class="text-yellow-400">"QUERY_AND_PAY"</span>,</p>
+                        <p class="pl-4">auth: {</p>
+                        <p class="pl-8">signature: <span class="text-slate-500">"0x7f...e3"</span></p>
+                        <p class="pl-4">}</p>
+                        <p>};</p>
+                        <p class="mt-4"><span class="text-neon-blue">>></span> Broadcast confirmed via Node #402</p>
+                        <p class="animate-pulse"><span class="text-neon-blue">>></span> Awaiting peer response_<span class="animate-pulse">|</span></p>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <footer class="py-10 border-t border-white/10 text-center md:text-left flex flex-col md:flex-row justify-between items-center text-slate-500 text-sm">
+            <div>
+                &copy; 2025 Unetify Labs. Research & Development.
+            </div>
+            <div class="flex gap-6 mt-4 md:mt-0 font-mono">
+                <a href="#" class="hover:text-white">GitHub</a>
+                <a href="#" class="hover:text-white">Twitter/X</a>
+                <a href="#" class="hover:text-white">Discord</a>
+            </div>
+        </footer>
+    </div>
+</body>
+</html>
