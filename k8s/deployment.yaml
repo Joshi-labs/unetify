@@ -1,0 +1,24 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: unetify-backend
+  namespace: apps-prod
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: unetify-backend
+  template:
+    metadata:
+      labels:
+        app: unetify-backend
+    spec:
+      containers:
+      - name: unetify-backend
+        image: ghcr.io/joshi-labs/unetify:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8000
+        envFrom:
+        - secretRef:
+            name: unetify-secrets

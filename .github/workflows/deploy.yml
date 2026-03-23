@@ -1,0 +1,88 @@
+name: Build and Deploy Unetify Backend
+
+on:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  deploy:
+    if: contains(github.event.head_commit.message, '[prod]')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/unetify:latest
+      NAMESPACE: apps-prod
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Lowercase image name
+        run: echo "IMAGE=${IMAGE_NAME,,}" >> $GITHUB_ENV
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          push: true
+          tags: ${{ env.IMAGE }}
+
+      - name: Install kubectl
+        run: |
+          KUBECTL_VERSION=$(curl -L -s https://dl.k8s.io/release/stable.txt)
+          curl -L -o kubectl https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/kubectl
+
+      - name: Configure kubeconfig
+        run: |
+          mkdir -p ~/.kube
+          cat <<EOF > ~/.kube/config
+          apiVersion: v1
+          kind: Config
+          clusters:
+          - name: k3s
+            cluster:
+              server: ${K8S_API_URL}
+              insecure-skip-tls-verify: true
+          users:
+          - name: ci-user
+            user:
+              token: ${K8S_TOKEN}
+          contexts:
+          - name: ci
+            context:
+              cluster: k3s
+              user: ci-user
+              namespace: ${NAMESPACE}
+          current-context: ci
+          EOF
+        env:
+          K8S_API_URL: ${{ secrets.K8S_API_URL }}
+          K8S_TOKEN: ${{ secrets.K8S_TOKEN }}
+
+      - name: Apply k8s manifests
+        run: |
+          kubectl --kubeconfig ~/.kube/config apply -f k8s/ --validate=false
+
+      - name: Restart deployment
+        run: |
+          kubectl --kubeconfig ~/.kube/config rollout restart deployment unetify-backend -n ${{ env.NAMESPACE }}
+
+      - name: Wait for rollout
+        run: |
+          kubectl --kubeconfig ~/.kube/config rollout status deployment unetify-backend -n ${{ env.NAMESPACE }} --timeout=120s
