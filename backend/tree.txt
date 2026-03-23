@@ -1,0 +1,575 @@
+backend/
+├── .env
+├── Dockerfile
+├── __pycache__
+│   └── main.cpython-313.pyc
+├── engine
+│   ├── __init__.py
+│   ├── agent_session.py
+│   ├── ollama.py
+│   └── queue.py
+├── main.py
+├── middleware
+│   ├── __init__.py
+│   └── rate_limit.py
+├── requirements.txt
+├── routers
+│   ├── __init__.py
+│   ├── agents.py
+│   ├── chat.py
+│   └── queue_status.py
+├── tree.py
+└── utils
+    ├── __init__.py
+    └── pocketbase.py
+
+
+
+========================================
+ FILE CONTENTS 
+========================================
+
+
+
+--- PATH: .env ---
+>>> [CONTENT IGNORED BY CONFIG]
+
+
+
+
+--- PATH: Dockerfile ---
+>>> [CONTENT IGNORED BY CONFIG]
+
+
+
+
+--- PATH: __pycache__/main.cpython-313.pyc ---
+[Error reading file: 'utf-8' codec can't decode byte 0xf3 in position 0: invalid continuation byte]
+
+
+
+
+--- PATH: engine/__init__.py ---
+
+
+
+
+
+--- PATH: engine/agent_session.py ---
+from datetime import datetime
+from typing import Optional
+
+
+class AgentSession:
+    """
+    Runtime object for a live agent.
+    Config is loaded from PocketBase on first request (or after restart).
+    Memory lives in-memory only — flushed to PocketBase periodically.
+    """
+
+    def __init__(self, agent_id: str, config: dict):
+        self.agent_id = agent_id
+        self.owner_id = config.get("owner_id")
+        self.name = config.get("name", "Agent")
+        self.system_prompt = config.get("system_prompt", "You are a helpful assistant. Be concise. Max 2-3 sentences.")
+        self.model = config.get("model", "llama3.2:1b")       # "llama3.2:1b" or "openai/gpt-4o" etc
+        self.api_key = config.get("api_key", None)             # None = use Ollama free tier
+        self.tools = config.get("tools", [])                   # ["calendar", "web_search", "agent_comms"]
+        self.memory_enabled = config.get("memory_enabled", True)
+
+        # In-memory conversation history
+        self.messages: list[dict] = []
+
+        # Rehydrate from persisted history if passed in
+        if config.get("history"):
+            self.messages = config["history"]
+
+        self.created_at = datetime.utcnow()
+        self.last_used = datetime.utcnow()
+
+    def add_message(self, role: str, content: str):
+        self.messages.append({"role": role, "content": content})
+        self.last_used = datetime.utcnow()
+        # Keep last 50 messages in memory max
+        if len(self.messages) > 50:
+            self.messages = self.messages[-50:]
+
+    def get_context(self) -> list[dict]:
+        """Returns full message history for inference."""
+        return self.messages
+
+    def is_expired(self, ttl_days: int = 7) -> bool:
+        delta = datetime.utcnow() - self.last_used
+        return delta.days >= ttl_days
+
+    def to_dict(self) -> dict:
+        return {
+            "agent_id": self.agent_id,
+            "owner_id": self.owner_id,
+            "name": self.name,
+            "model": self.model,
+            "tools": self.tools,
+            "last_used": self.last_used.isoformat(),
+            "message_count": len(self.messages),
+        }
+
+
+# Global session store — keyed by agent_id
+# In production this would be Redis. For demo, in-memory is fine.
+_sessions: dict[str, AgentSession] = {}
+
+
+def get_session(agent_id: str) -> Optional[AgentSession]:
+    return _sessions.get(agent_id)
+
+
+def set_session(agent_id: str, session: AgentSession):
+    _sessions[agent_id] = session
+
+
+def delete_session(agent_id: str):
+    _sessions.pop(agent_id, None)
+
+
+def get_all_sessions() -> dict[str, AgentSession]:
+    return _sessions
+
+
+def purge_expired_sessions(ttl_days: int = 7):
+    """Call this on a background task or startup."""
+    expired = [aid for aid, s in _sessions.items() if s.is_expired(ttl_days)]
+    for aid in expired:
+        del _sessions[aid]
+    return len(expired)
+
+
+
+
+--- PATH: engine/ollama.py ---
+import os
+import httpx
+from engine.agent_session import AgentSession
+
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://192.168.1.10:11434")
+
+
+async def run_inference(session: AgentSession, user_message: str) -> str:
+    """
+    Routes to Ollama (free tier) or external API (BYO key).
+    Adds user message to session memory, returns assistant reply.
+    """
+    session.add_message("user", user_message)
+
+    if session.api_key:
+        reply = await _run_openai_compatible(session)
+    else:
+        reply = await _run_ollama(session)
+
+    session.add_message("assistant", reply)
+    return reply
+
+
+# --- Ollama (free tier) ---
+
+async def _run_ollama(session: AgentSession) -> str:
+    payload = {
+        "model": session.model,
+        "messages": _build_messages(session),
+        "stream": False,
+        "options": {
+            "num_predict": 256,   # keep responses short on free tier
+        }
+    }
+    async with httpx.AsyncClient(timeout=60) as client:
+        resp = await client.post(f"{OLLAMA_URL}/api/chat", json=payload)
+        resp.raise_for_status()
+        data = resp.json()
+        return data["message"]["content"].strip()
+
+
+# --- BYO API key (OpenAI-compatible) ---
+# Works for OpenAI, Groq, Together, OpenRouter — all use the same schema.
+
+async def _run_openai_compatible(session: AgentSession) -> str:
+    # model string format: "openai/gpt-4o", "groq/llama3-70b", etc.
+    # We strip the prefix and use the base URL accordingly
+    model_str = session.model
+    base_url, model_name = _resolve_provider(model_str)
+
+    headers = {
+        "Authorization": f"Bearer {session.api_key}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": model_name,
+        "messages": _build_messages(session),
+        "max_tokens": 512,
+    }
+    async with httpx.AsyncClient(timeout=60) as client:
+        resp = await client.post(f"{base_url}/chat/completions", headers=headers, json=payload)
+        resp.raise_for_status()
+        data = resp.json()
+        return data["choices"][0]["message"]["content"].strip()
+
+
+def _resolve_provider(model_str: str) -> tuple[str, str]:
+    """Maps 'provider/model' string to (base_url, model_name)."""
+    providers = {
+        "openai":    "https://api.openai.com/v1",
+        "groq":      "https://api.groq.com/openai/v1",
+        "together":  "https://api.together.xyz/v1",
+        "openrouter":"https://openrouter.ai/api/v1",
+        "gemini":    "https://generativelanguage.googleapis.com/v1beta/openai",
+    }
+    if "/" in model_str:
+        prefix, model_name = model_str.split("/", 1)
+        base_url = providers.get(prefix, providers["openai"])
+        return base_url, model_name
+    # Default to OpenAI if no prefix
+    return providers["openai"], model_str
+
+
+def _build_messages(session: AgentSession) -> list[dict]:
+    """Prepends system prompt to conversation history."""
+    system = {"role": "system", "content": session.system_prompt}
+    return [system] + session.get_context()
+
+
+
+
+--- PATH: engine/queue.py ---
+import asyncio
+import uuid
+from datetime import datetime
+from typing import Optional
+
+# --- Queue item ---
+
+class QueueItem:
+    def __init__(self, agent_id: str, user_id: str, message: str):
+        self.job_id = str(uuid.uuid4())[:8]
+        self.agent_id = agent_id
+        self.user_id = user_id
+        self.message = message
+        self.status = "waiting"        # waiting | running | done | failed
+        self.result: Optional[str] = None
+        self.error: Optional[str] = None
+        self.queued_at = datetime.utcnow()
+        self.started_at: Optional[datetime] = None
+        self.finished_at: Optional[datetime] = None
+        self.future: asyncio.Future = asyncio.get_event_loop().create_future()
+
+    def to_dict(self) -> dict:
+        return {
+            "job_id": self.job_id,
+            "agent_id": self.agent_id,
+            "user_id": self.user_id,
+            "status": self.status,
+            "queued_at": self.queued_at.isoformat(),
+            "started_at": self.started_at.isoformat() if self.started_at else None,
+            "finished_at": self.finished_at.isoformat() if self.finished_at else None,
+        }
+
+
+# --- Global queue state ---
+
+_queue: asyncio.Queue = asyncio.Queue()
+_active_jobs: dict[str, QueueItem] = {}   # job_id -> QueueItem (all recent jobs)
+MAX_TRACKED_JOBS = 50
+
+
+def get_queue_snapshot() -> list[dict]:
+    """
+    Returns current queue state for the UI.
+    Shows running job first, then waiting jobs in order.
+    """
+    jobs = list(_active_jobs.values())
+    jobs.sort(key=lambda j: j.queued_at)
+    return [j.to_dict() for j in jobs if j.status in ("waiting", "running")]
+
+
+def get_queue_depth() -> int:
+    return _queue.qsize()
+
+
+# --- Submit a job ---
+
+async def submit_job(agent_id: str, user_id: str, message: str) -> QueueItem:
+    item = QueueItem(agent_id, user_id, message)
+    _active_jobs[item.job_id] = item
+
+    # Prune old completed jobs if too many tracked
+    completed = [jid for jid, j in _active_jobs.items() if j.status in ("done", "failed")]
+    if len(completed) > MAX_TRACKED_JOBS:
+        for jid in completed[:10]:
+            del _active_jobs[jid]
+
+    await _queue.put(item)
+    return item
+
+
+# --- Worker - runs as a background task on startup ---
+
+async def inference_worker(run_inference_fn):
+    """
+    Single worker that drains the queue one job at a time.
+    run_inference_fn(item: QueueItem) -> str  (the model response)
+    Pass this in from main.py so the worker stays decoupled.
+    """
+    while True:
+        item: QueueItem = await _queue.get()
+
+        item.status = "running"
+        item.started_at = datetime.utcnow()
+
+        try:
+            result = await run_inference_fn(item)
+            item.result = result
+            item.status = "done"
+            item.future.set_result(result)
+        except Exception as e:
+            item.error = str(e)
+            item.status = "failed"
+            if not item.future.done():
+                item.future.set_exception(e)
+        finally:
+            item.finished_at = datetime.utcnow()
+            _queue.task_done()
+
+
+
+
+--- PATH: main.py ---
+import asyncio
+from contextlib import asynccontextmanager
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from engine.queue import inference_worker
+from engine.agent_session import purge_expired_sessions
+from engine.ollama import run_inference as ollama_run
+from engine.agent_session import get_session
+
+from routers import agents, chat, queue_status
+
+
+# --- Inference function passed to the queue worker ---
+
+async def run_inference_job(item):
+    """Bridge between QueueItem and the inference engine."""
+    session = get_session(item.agent_id)
+    if not session:
+        raise ValueError(f"Session not found for agent {item.agent_id}")
+    return await ollama_run(session, item.message)
+
+
+# --- Lifespan: start background tasks on boot ---
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Start the single inference worker
+    worker_task = asyncio.create_task(inference_worker(run_inference_job))
+
+    # Purge expired sessions every hour
+    async def purge_loop():
+        while True:
+            await asyncio.sleep(3600)
+            purged = purge_expired_sessions()
+            if purged:
+                print(f"[purge] Removed {purged} expired sessions")
+
+    purge_task = asyncio.create_task(purge_loop())
+
+    yield
+
+    worker_task.cancel()
+    purge_task.cancel()
+
+
+# --- App ---
+
+app = FastAPI(title="Unetify API", version="0.1.0", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "https://ai.unetify.in",
+        "http://localhost:5173",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(agents.router, prefix="/agents", tags=["agents"])
+app.include_router(chat.router, prefix="/chat", tags=["chat"])
+app.include_router(queue_status.router, prefix="/queue", tags=["queue"])
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+
+
+
+--- PATH: middleware/__init__.py ---
+
+
+
+
+
+--- PATH: middleware/rate_limit.py ---
+from datetime import datetime, timedelta
+from collections import defaultdict
+from fastapi import Request, HTTPException
+
+# tier -> (requests_per_day)
+TIER_LIMITS = {
+    "free":     20,
+    "lite":     200,
+    "pro":      1000,
+    "business": 999999,
+}
+
+# In-memory store: user_id -> {"count": int, "reset_at": datetime}
+_usage: dict[str, dict] = defaultdict(lambda: {"count": 0, "reset_at": datetime.utcnow() + timedelta(days=1)})
+
+
+def check_rate_limit(user_id: str, tier: str = "free"):
+    entry = _usage[user_id]
+    now = datetime.utcnow()
+
+    # Reset counter if window has passed
+    if now >= entry["reset_at"]:
+        entry["count"] = 0
+        entry["reset_at"] = now + timedelta(days=1)
+
+    limit = TIER_LIMITS.get(tier, TIER_LIMITS["free"])
+
+    if entry["count"] >= limit:
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error": "rate_limit_exceeded",
+                "limit": limit,
+                "tier": tier,
+                "resets_at": entry["reset_at"].isoformat(),
+            }
+        )
+
+    entry["count"] += 1
+
+
+def get_usage(user_id: str) -> dict:
+    entry = _usage[user_id]
+    return {
+        "used": entry["count"],
+        "resets_at": entry["reset_at"].isoformat(),
+    }
+
+
+
+
+--- PATH: requirements.txt ---
+[Error reading file: 'utf-8' codec can't decode byte 0xff in position 0: invalid start byte]
+
+
+
+
+--- PATH: routers/__init__.py ---
+
+
+
+
+
+--- PATH: routers/agents.py ---
+
+
+
+
+
+--- PATH: routers/chat.py ---
+
+
+
+
+
+--- PATH: routers/queue_status.py ---
+
+
+
+
+
+--- PATH: tree.py ---
+>>> [CONTENT IGNORED BY CONFIG]
+
+
+
+
+--- PATH: utils/__init__.py ---
+
+
+
+
+
+--- PATH: utils/pocketbase.py ---
+import os
+import httpx
+
+PB_URL = os.getenv("PB_URL", "https://pocketbase.vpjoshi.in")
+
+
+async def get_agent_config(agent_id: str, pb_token: str) -> dict | None:
+    """Fetch agent config from PocketBase. Returns None if not found."""
+    headers = {"Authorization": pb_token}
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(f"{PB_URL}/api/collections/agents/records/{agent_id}", headers=headers)
+        if resp.status_code == 404:
+            return None
+        resp.raise_for_status()
+        return resp.json()
+
+
+async def get_agent_history(agent_id: str, pb_token: str, limit: int = 30) -> list[dict]:
+    """Fetch last N messages for an agent to rehydrate session memory."""
+    headers = {"Authorization": pb_token}
+    params = {
+        "filter": f'agent_id="{agent_id}"',
+        "sort": "-created",
+        "perPage": limit,
+    }
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(f"{PB_URL}/api/collections/messages/records", headers=headers, params=params)
+        resp.raise_for_status()
+        data = resp.json()
+        items = data.get("items", [])
+        # Reverse so oldest is first (chronological order)
+        items.reverse()
+        return [{"role": m["role"], "content": m["content"]} for m in items]
+
+
+async def persist_message(agent_id: str, role: str, content: str, pb_token: str):
+    """Save a single message to PocketBase."""
+    headers = {"Authorization": pb_token, "Content-Type": "application/json"}
+    payload = {"agent_id": agent_id, "role": role, "content": content}
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.post(f"{PB_URL}/api/collections/messages/records", headers=headers, json=payload)
+        resp.raise_for_status()
+
+
+async def get_or_create_session_config(agent_id: str, pb_token: str) -> dict | None:
+    """
+    Full rehydration helper.
+    Returns config dict with history injected, ready to pass into AgentSession().
+    """
+    config = await get_agent_config(agent_id, pb_token)
+    if not config:
+        return None
+    history = await get_agent_history(agent_id, pb_token)
+    config["history"] = history
+    return config
+
+
+
+

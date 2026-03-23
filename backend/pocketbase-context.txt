@@ -1,0 +1,114 @@
+=====================================
+ UNETIFY — POCKETBASE CONTEXT
+ URL: https://pocketbase.vpjoshi.in
+=====================================
+
+PROXY CONFIG
+------------
+Header: CF-Connecting-IP
+Use rightmost IP: true
+Reason: PocketBase sits behind Cloudflare Tunnel (k8s-box)
+
+
+=====================================
+ COLLECTIONS
+=====================================
+
+1. users (Auth collection)
+---------------------------
+Type: Auth
+Auto fields: id, email, emailVisibility, verified, created, updated
+
+Custom fields:
+  - tier         Text    (values: free | lite | pro | business)
+  - api_key      Text    (user's BYO API key, optional)
+
+OAuth: NOT configured yet (deferred)
+Rules: PocketBase auth collection defaults
+
+
+2. agents (Base collection)
+----------------------------
+Type: Base
+Auto fields: id, created, updated
+
+Custom fields:
+  - owner_id        Relation → users    Single    Nonempty
+  - name            Text                          Nonempty
+  - system_prompt   Text                          Nonempty
+  - model           Text                          Nonempty    (default handled in backend: llama3.2:1b)
+  - api_key         Text                          Optional    (agent-level BYO key override)
+  - tools           JSON                          Optional    (e.g. ["calendar", "web_search", "agent_comms"])
+  - memory_enabled  Bool                          Optional    (default handled in backend: true)
+  - last_used       Date                          Optional
+
+Rules:
+  List:   @request.auth.id = owner_id
+  View:   @request.auth.id = owner_id
+  Create: @request.auth.id != ""
+  Update: @request.auth.id = owner_id
+  Delete: @request.auth.id = owner_id
+
+
+3. messages (Base collection)
+------------------------------
+Type: Base
+Auto fields: id, created, updated
+
+Custom fields:
+  - agent_id    Relation → agents    Single    Nonempty
+  - role        Text                           Nonempty    (values: user | assistant)
+  - content     Text                           Nonempty
+
+Rules:
+  List:   @request.auth.id = agent_id.owner_id
+  View:   @request.auth.id = agent_id.owner_id
+  Create: @request.auth.id = agent_id.owner_id
+  Update: (empty — messages are immutable)
+  Delete: (empty — messages are immutable)
+
+
+4. agent_comms (Base collection)
+----------------------------------
+Type: Base
+Auto fields: id, created, updated
+
+Custom fields:
+  - from_agent_id   Relation → agents    Single    Nonempty
+  - to_agent_id     Relation → agents    Single    Nonempty
+  - message         Text                           Nonempty
+  - reply           Text                           Optional    (filled by receiving agent)
+  - status          Text                           Nonempty    (values: pending | delivered | failed)
+
+Rules:
+  List:   @request.auth.id = from_agent_id.owner_id || @request.auth.id = to_agent_id.owner_id
+  View:   @request.auth.id = from_agent_id.owner_id || @request.auth.id = to_agent_id.owner_id
+  Create: @request.auth.id = from_agent_id.owner_id
+  Update: @request.auth.id = to_agent_id.owner_id
+  Delete: (empty)
+
+
+=====================================
+ NOTES
+=====================================
+
+- Default field values (model: llama3.2:1b, memory_enabled: true) are
+  handled in the Python backend, not in PocketBase UI.
+
+- agent_comms is for cross-user agent-to-agent messaging only.
+  The inference queue is purely in-memory Python (engine/queue.py).
+
+- Razorpay webhook will update users.tier field when payment is confirmed.
+  This is handled in a future Python router — not set up yet.
+
+- OAuth (Google, GitHub) to be enabled later under:
+  PocketBase Admin → Settings → Auth providers
+
+=====================================
+ TODO (deferred)
+=====================================
+
+[ ] Enable Google OAuth — needs Google Cloud Console Client ID + Secret
+[ ] Enable GitHub OAuth — needs GitHub Developer Settings Client ID + Secret
+[ ] Razorpay webhook → update users.tier on payment
+[ ] Encrypt api_key fields at rest (consider PocketBase hooks or backend-side encryption)
